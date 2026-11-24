@@ -206,48 +206,51 @@ void filterNodes (MetaGraph & graph, int nodeThreshold) {
 }
 
 
-/* As upstream: for each meta node, the links of its reads to reads outside
-   it (in another meta node or in none) are counted per *read index*, and
-   every neighbor whose meta node idx equals such a read index, counted at
-   most edgeThreshold times, is removed from the meta node's neighbors (on
-   that side only). Only read indices equal to a neighbor idx can change the
-   result, so only those are counted. */
+/* The weight of an edge between two meta nodes is the number of read links
+   between their reads. Edges of weight at most edgeThreshold are removed,
+   from both meta nodes (the weights are the same from both sides); 0 keeps
+   every edge.
+
+   Upstream (ComponentSearch2 f705924) was given -N instead of -E, counted
+   the links per outside read instead of per meta node, and removed the
+   neighbor whose meta node number equalled such a read number, on one side
+   only. On production graphs it removed none of the weight-1 edges. */
 void filterEdges (MetaGraph & graph, int edgeThreshold, const ReadGraph & reads) {
-	int readsNb = reads.size();
+	if (edgeThreshold <= 0)
+		return;
 
-	// compute the nodes affectations
-	vector<int> metaAffectation (readsNb, -1);
-	for (const MetaNode & mn : graph.nodes)
-		for (int read : mn.subNodes)
-			metaAffectation[read] = mn.idx;
+	// Position of the meta node of each read (-1: filtered out)
+	vector<int> readPosition (reads.size(), -1);
+	for (size_t position = 0 ; position < graph.nodes.size() ; position++)
+		for (int read : graph.nodes[position].subNodes)
+			readPosition[read] = position;
 
-	vector<int> weights (readsNb, 0);
-	vector<int> neighborOf (readsNb, -1);
-	for (MetaNode & mn : graph.nodes) {
+	vector<long> weights (graph.nodes.size(), 0);
+	for (size_t position = 0 ; position < graph.nodes.size() ; position++) {
+		MetaNode & mn = graph.nodes[position];
 		if (mn.neighbors.empty())
 			continue;
-		for (int neiIdx : mn.neighbors)
-			if (neiIdx < readsNb)
-				neighborOf[neiIdx] = mn.idx;
 
 		// Compute weights
-		for (int read : mn.subNodes) {
+		for (int read : mn.subNodes)
 			for (const int * nei = reads.neighborsBegin(read) ; nei != reads.neighborsEnd(read) ; nei++) {
-				if (neighborOf[*nei] == mn.idx && metaAffectation[*nei] != mn.idx)
-					weights[*nei]++;
+				int neiPosition = readPosition[*nei];
+				if (neiPosition >= 0 && neiPosition != (int) position)
+					weights[neiPosition]++;
 			}
-		}
 
 		// Deletion of edges under the threshold
 		size_t kept = 0;
-		for (size_t i = 0 ; i < mn.neighbors.size() ; i++) {
-			int neiIdx = mn.neighbors[i];
-			int weight = neiIdx < readsNb ? weights[neiIdx] : 0;
-			if (weight == 0 || weight > edgeThreshold)
+		for (int neiIdx : mn.neighbors) {
+			int neiPosition = graph.positionOf(neiIdx);
+			if (neiPosition >= 0 && weights[neiPosition] > edgeThreshold)
 				mn.neighbors[kept++] = neiIdx;
-			if (neiIdx < readsNb)
-				weights[neiIdx] = 0;
 		}
 		mn.neighbors.resize(kept);
+
+		for (int read : mn.subNodes)
+			for (const int * nei = reads.neighborsBegin(read) ; nei != reads.neighborsEnd(read) ; nei++)
+				if (readPosition[*nei] >= 0)
+					weights[readPosition[*nei]] = 0;
 	}
 }

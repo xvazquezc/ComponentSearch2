@@ -56,9 +56,7 @@ int main (int argc, char * argv[]) {
 			}
 		}
 	}
-	// Parsed but unused, as upstream: filterEdges gets -N and splice never
-	// optimizes. Kept so that results don't change.
-	(void) edgeFilter;
+	// Parsed but unused, as upstream: splice never optimizes.
 	(void) optimizeComponents;
 
 	// Init random generator
@@ -109,7 +107,7 @@ int main (int argc, char * argv[]) {
 	cout << metagraph.nodes.size() << " nodes in the filtered graph" << endl;
 
 	cout << "-> Filtering edges..." << endl;
-	filterEdges (metagraph, nodeFilter, graph);
+	filterEdges (metagraph, edgeFilter, graph);
 	cout << metagraph.getEdgesNb() << " edges in the filtered graph" << endl;
 
 	// The read links are not needed any more.
