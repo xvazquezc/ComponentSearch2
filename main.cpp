@@ -1,6 +1,7 @@
-#include <iostream>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 
 #include "Graph.hpp"
@@ -55,6 +56,10 @@ int main (int argc, char * argv[]) {
 			}
 		}
 	}
+	// Parsed but unused, as upstream: filterEdges gets -N and splice never
+	// optimizes. Kept so that results don't change.
+	(void) edgeFilter;
+	(void) optimizeComponents;
 
 	// Init random generator
 	srand(seed);
@@ -63,20 +68,23 @@ int main (int argc, char * argv[]) {
 	// --- Loading ---
 	cout << endl << "--- Loading ---" << endl;
 
-	ifstream nodesFile (nodesFilename.c_str());
-	if (!nodesFile) {
-		cerr << "The file " << nodesFilename << " seems to be missing." << endl;
-		return 1;
+	{
+		ifstream nodesFile (nodesFilename.c_str());
+		if (!nodesFile) {
+			cerr << "The file " << nodesFilename << " seems to be missing." << endl;
+			return 1;
+		}
+
+		ifstream edgesFile (edgesFilename.c_str());
+		if (!edgesFile) {
+			cerr << "The file " << edgesFilename << " seems to be missing." << endl;
+			return 1;
+		}
 	}
 
-	ifstream edgesFile (edgesFilename.c_str());
-	if (!edgesFile) {
-		cerr << "The file " << edgesFilename << " seems to be missing." << endl;
-		return 1;
-	}
-
-	Graph<Node> graph = load_graph(nodesFile, edgesFile);
-	cout << graph.nodes.size() << " nodes loaded " << endl;
+	ReadGraph graph = load_graph(nodesFilename, edgesFilename);
+	int readsNb = graph.size();
+	cout << readsNb << " nodes loaded " << endl;
 
 
 	// --- Algorithms ---
@@ -85,28 +93,32 @@ int main (int argc, char * argv[]) {
 	vector<int> bfs = BFS (graph);
 
 	cout << "-> Contraction..." << endl;
-	Graph<MetaNode> contracted = contract (graph, bfs);
-	cout << contracted.nodes.size() << " nodes in the contracted graph" << endl;
-	cout << contracted.getEdgesNb() << " edges in the contracted graph" << endl;
+	MetaGraph metagraph = contract (graph, bfs);
+	vector<int>().swap(bfs);
+	cout << metagraph.nodes.size() << " nodes in the contracted graph" << endl;
+	cout << metagraph.getEdgesNb() << " edges in the contracted graph" << endl;
 
 	cout << "-> Absorb fingers..." << endl;
-	contracted = absorbFingers (contracted);
-	cout << contracted.nodes.size() << " nodes in the contracted graph" << endl;
-	cout << contracted.getEdgesNb() << " edges in the contracted graph" << endl;
+	absorbFingers (metagraph);
+	cout << metagraph.nodes.size() << " nodes in the contracted graph" << endl;
+	cout << metagraph.getEdgesNb() << " edges in the contracted graph" << endl;
 
 	cout << endl << "--- Filtering ---" << endl;
 	cout << "-> Filtering nodes..." << endl;
-	Graph<MetaNode> filtered = filterNodes (contracted, nodeFilter);
-	cout << filtered.nodes.size() << " nodes in the filtered graph" << endl;
+	filterNodes (metagraph, nodeFilter);
+	cout << metagraph.nodes.size() << " nodes in the filtered graph" << endl;
 
 	cout << "-> Filtering edges..." << endl;
-	filtered = filterEdges (filtered, nodeFilter, graph.nodes.size());
-	cout << filtered.getEdgesNb() << " edges in the filtered graph" << endl;
+	filterEdges (metagraph, nodeFilter, graph);
+	cout << metagraph.getEdgesNb() << " edges in the filtered graph" << endl;
+
+	// The read links are not needed any more.
+	graph = ReadGraph();
 
 
 	// --- Splicing ---
 	cout << endl << "--- Splicing ---" << endl;
-	Graph<MetaNode> spliced = splice (filtered, false);
+	splice (metagraph, false);
 
 
 	// --- Output ---
@@ -116,7 +128,7 @@ int main (int argc, char * argv[]) {
 	ss << basename << ".components.csv";
 	ofstream outStream (ss.str());
 	ifstream inStream (nodesFilename);
-	save_componants (spliced, graph, inStream, outStream);
+	save_componants (metagraph, readsNb, inStream, outStream);
 
 	cout << "-> Saving meta graph" << endl;
 	stringstream nodes;
@@ -125,7 +137,7 @@ int main (int argc, char * argv[]) {
 	edges << basename << ".metaEdges.csv";
 	ofstream nodesStream (nodes.str());
 	ofstream edgesStream (edges.str());
-	save_metagraph (spliced, nodesStream, edgesStream);
+	save_metagraph (metagraph, nodesStream, edgesStream);
 
 	cout << endl << "--- Program ended ---" << endl << endl;
 

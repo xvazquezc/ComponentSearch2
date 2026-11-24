@@ -1,16 +1,23 @@
 #include "splicing.hpp"
 
+#include <algorithm>
+#include <vector>
 
 
-Graph<MetaNode> splice (Graph<MetaNode> graph, bool optimize) {
+using namespace std;
+
+
+/* Hub meta nodes (more than two neighbors) are cut from their neighbors of
+   at most two neighbors, in node order with the current neighbor counts. */
+void splice (MetaGraph & graph, bool optimize) {
+	vector<int> neiToRemove;
 	for (MetaNode & mn : graph.nodes) {
-		set<int> neiToRemove;
+		neiToRemove.clear();
 
 		// Looks for hub nodes
 		if (mn.neighbors.size() > 2) {
 			for (int neiIdx : mn.neighbors) {
 				MetaNode & nei = graph.getNodeFromIdx(neiIdx);
-
 
 				// If the neighbor is not from the same component
 				if (nei.neighbors.size() <= 2) {
@@ -20,7 +27,7 @@ Graph<MetaNode> splice (Graph<MetaNode> graph, bool optimize) {
 						nei.neighbors.end()
 					);
 
-					neiToRemove.insert(neiIdx);
+					neiToRemove.push_back(neiIdx);
 
 					// optimize the nodes in the components that are not hubs
 					if (optimize) {
@@ -30,15 +37,12 @@ Graph<MetaNode> splice (Graph<MetaNode> graph, bool optimize) {
 			}
 		}
 
+		// Remove the main node to neighbor links (neighbors are distinct)
 		for (int idx : neiToRemove) {
-			// Remove the main node to neighbor link
 			mn.neighbors.erase(
 				remove(mn.neighbors.begin(), mn.neighbors.end(), idx),
 				mn.neighbors.end()
 			);
 		}
 	}
-
-	return graph;
 }
-

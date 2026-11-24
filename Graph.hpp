@@ -1,70 +1,58 @@
+#include <cstdint>
 #include <vector>
-#include <iostream>
 
 
-using namespace std;
+#ifndef GRAPH_HPP
+#define GRAPH_HPP
+
+/* Read graph in compressed sparse row form: the neighbors of read i are
+   targets[offsets[i]] .. targets[offsets[i + 1] - 1], in the order of the
+   edges file (an edge i;j adds j to i, then i to j; a self-loop twice).
+   It costs 8 bytes per edge and nothing else per edge. */
+class ReadGraph {
+public:
+	std::vector<uint64_t> offsets;  // number of reads + 1
+	std::vector<int> targets;
+
+	int size () const {
+		return offsets.empty() ? 0 : (int) (offsets.size() - 1);
+	}
+	const int * neighborsBegin (int read) const {
+		return targets.data() + offsets[read];
+	}
+	const int * neighborsEnd (int read) const {
+		return targets.data() + offsets[read + 1];
+	}
+};
 
 
-#ifndef NODE_HPP
-#define NODE_HPP
-
-class Node {
+/* A group of reads (subNodes, by read index) and its links to other meta
+   nodes (neighbors, by meta node idx). */
+class MetaNode {
 public:
 	int idx;
-	vector<int> neighbors;
-
-	Node ();
-	Node (int idx);
-
-	void print ();
-
-	bool operator==(const Node &other) const;
+	std::vector<int> neighbors;
+	std::vector<int> subNodes;
 };
 
-class MetaNode : public Node {
+
+class MetaGraph {
 public:
+	std::vector<MetaNode> nodes;  // by increasing idx
 
-	vector<Node> subNodes;
-	MetaNode ();
-	void print();
+	// The node with this idx; exits if there is none. Nodes marked for
+	// removal stay reachable until removeMarked.
+	MetaNode & getNodeFromIdx (int idx);
+	// Position of the node with this idx in nodes, or -1.
+	int positionOf (int idx) const;
+	// Rebuilds the idx -> position index after nodes changed.
+	void indexNodes ();
+	// Removes the nodes marked (by position), keeping the others in order.
+	void removeMarked (const std::vector<char> & removed);
+	long getEdgesNb () const;
+
+private:
+	std::vector<int> positions;
 };
-
-
-template <typename N>
-class Graph {
-public:
-	vector<N> nodes;
-
-	Graph();
-
-	N & getNodeFromIdx (int idx);
-	long getEdgesNb();
-	void print();
-};
-
-
-/* ----- Template implementations ----- */
-
-template <typename N>
-Graph<N>::Graph() {}
-
-template <typename N>
-void Graph<N>::print() {
-	for (N node : nodes)
-		node.print();
-}
-
-template <typename N>
-N & Graph<N>::getNodeFromIdx (int idx) {
-	return *(find(nodes.begin(), nodes.end(), Node(idx)));
-}
-
-template <typename N>
-long Graph<N>::getEdgesNb() {
-	long edgesNb = 0;
-	for (N node: nodes)
-		edgesNb += node.neighbors.size();
-	return edgesNb / 2;
-}
 
 #endif

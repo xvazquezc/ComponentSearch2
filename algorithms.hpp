@@ -1,19 +1,15 @@
 #include <vector>
-#include <set>
-#include <map>
-#include <algorithm>
 
 #include "Graph.hpp"
 
-using namespace std;
 
 #ifndef ALGOS_HPP
 #define ALGOS_HPP
 
-vector<int> BFS (Graph<Node> & graph);
-Graph<MetaNode> contract (Graph<Node> graph, vector<int> dfs);
-Graph<MetaNode> absorbFingers (Graph<MetaNode> graph);
-Graph<MetaNode> filterNodes (Graph<MetaNode> graph, int nodeThreshold);
-Graph<MetaNode> filterEdges (Graph<MetaNode> graph, int edgeThreshold, int originalSize);
+std::vector<int> BFS (const ReadGraph & graph);
+MetaGraph contract (const ReadGraph & graph, const std::vector<int> & dfs);
+void absorbFingers (MetaGraph & graph);
+void filterNodes (MetaGraph & graph, int nodeThreshold);
+void filterEdges (MetaGraph & graph, int edgeThreshold, const ReadGraph & reads);
 
 #endif

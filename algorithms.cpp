@@ -1,46 +1,89 @@
 #include "algorithms.hpp"
 
-#include <iostream>
+#include <algorithm>
+#include <cstdlib>
 
 
-vector<int> BFS (Graph<Node> & graph) {
-	vector<int> dfs (graph.nodes.size(), -1);
-	set<int> toAnnotate;
-	for (int i=0 ; i<graph.nodes.size() ; i++)
-		toAnnotate.insert(i);
+using namespace std;
 
 
+namespace {
+
+/* The reads not yet annotated by the BFS, with the k-th smallest found in
+   O(log n) (a Fenwick tree), as advancing k steps in a std::set would. */
+class RemainingReads {
+public:
+	explicit RemainingReads (int size) : tree(size + 1), size(size), topStep(1) {
+		for (int i = 1 ; i <= size ; i++)
+			tree[i] = i & -i;
+		while (topStep * 2 <= size)
+			topStep *= 2;
+	}
+
+	void remove (int read) {
+		for (int i = read + 1 ; i <= size ; i += i & -i)
+			tree[i]--;
+	}
+
+	int kth (size_t k) const {
+		int position = 0;
+		for (int step = topStep ; step > 0 ; step >>= 1) {
+			if (position + step <= size && (size_t) tree[position + step] <= k) {
+				position += step;
+				k -= tree[position];
+			}
+		}
+		return position;
+	}
+
+private:
+	vector<int> tree;
+	int size;
+	int topStep;
+};
+
+}  // namespace
+
+
+/* Levels of a breadth-first search from a random read of each connected
+   component. The start read and its neighbors share a level; each component
+   ends with an unused level number. */
+vector<int> BFS (const ReadGraph & graph) {
+	int readsNb = graph.size();
+	vector<int> dfs (readsNb, -1);
+	RemainingReads toAnnotate (readsNb);
+	size_t toAnnotateNb = readsNb;
+
+	vector<int> nextIdxs;
+	vector<int> neighbors;
 	int currentIdx = 1;
-	while (toAnnotate.size() > 0) {
+	while (toAnnotateNb > 0) {
 		// Random init of the first node
-		int offset = rand() % toAnnotate.size();
-		set<int>::iterator it = toAnnotate.begin();
-		advance(it, offset);
-		int startIdx = *it;
-		toAnnotate.erase(startIdx);
+		size_t offset = rand() % toAnnotateNb;
+		int startIdx = toAnnotate.kth(offset);
+		toAnnotate.remove(startIdx);
+		toAnnotateNb--;
 
 		// Init
-		set<int> nextIdxs;
-		nextIdxs.insert(startIdx);
+		nextIdxs.assign(1, startIdx);
 		dfs[startIdx] = currentIdx;
 
-		// Recursion
+		// One level at a time; the order within a level changes nothing.
 		while (nextIdxs.size() > 0) {
-			set<int> neighbors;
+			neighbors.clear();
 
 			for (int nodeIdx : nextIdxs) {
-				Node & node = graph.getNodeFromIdx(nodeIdx);
-
-				for (int neiIdx : node.neighbors) {
-					if (dfs[neiIdx] == -1) {
-						dfs[neiIdx] = currentIdx;
-						neighbors.insert(neiIdx);
-						toAnnotate.erase(neiIdx);
+				for (const int * nei = graph.neighborsBegin(nodeIdx) ; nei != graph.neighborsEnd(nodeIdx) ; nei++) {
+					if (dfs[*nei] == -1) {
+						dfs[*nei] = currentIdx;
+						neighbors.push_back(*nei);
+						toAnnotate.remove(*nei);
+						toAnnotateNb--;
 					}
 				}
 			}
 
-			nextIdxs = neighbors;
+			nextIdxs.swap(neighbors);
 			currentIdx++;
 		}
 	}
@@ -49,103 +92,102 @@ vector<int> BFS (Graph<Node> & graph) {
 }
 
 
-Graph<MetaNode> contract (Graph<Node> graph, vector<int> dfs) {
-	Graph<MetaNode> contracted;
-	vector<int> affectations (dfs.size(), -1);
+/* One meta node per group of connected reads of the same BFS level, in the
+   order of their smallest read; meta node links sorted by idx. */
+MetaGraph contract (const ReadGraph & graph, const vector<int> & dfs) {
+	int readsNb = graph.size();
+	MetaGraph contracted;
+	vector<int> affectations (readsNb, -1);
 
-	// Meta nodes creation
+	// Meta nodes creation. The reads of a meta node are the same whatever
+	// the order of the visit, and nothing depends on the order of subNodes.
 	int metaIdx = 0;
-	for (int idx=0 ; idx<dfs.size() ; idx++) {
+	vector<int> currentSet;
+	for (int idx=0 ; idx<readsNb ; idx++) {
 		if (affectations[idx] == -1) {
-			// Init
-			set<int> currentSet;
-			currentSet.insert(idx);
 			int annotation = dfs[idx];
 			MetaNode mn;
 			mn.idx = metaIdx++;
 
+			affectations[idx] = mn.idx;
+			currentSet.assign(1, idx);
 			while (currentSet.size() > 0) {
-				// Modification for current node
-				int nodeIdx = *(currentSet.begin());
-				currentSet.erase(currentSet.begin());
-				affectations[nodeIdx] = mn.idx;
-				Node & node = graph.getNodeFromIdx(nodeIdx);
-				mn.subNodes.push_back(node);
+				int nodeIdx = currentSet.back();
+				currentSet.pop_back();
+				mn.subNodes.push_back(nodeIdx);
 
 				// Adding the neighbors
-				for (int neiIdx : node.neighbors)
-					if (affectations[neiIdx] == -1 && dfs[neiIdx] == annotation)
-						currentSet.insert(neiIdx);
+				for (const int * nei = graph.neighborsBegin(nodeIdx) ; nei != graph.neighborsEnd(nodeIdx) ; nei++) {
+					if (affectations[*nei] == -1 && dfs[*nei] == annotation) {
+						affectations[*nei] = mn.idx;
+						currentSet.push_back(*nei);
+					}
+				}
 			}
 
-			contracted.nodes.push_back(mn);
+			contracted.nodes.push_back(std::move(mn));
 		}
 	}
 
 
 	// MetaLinks creation
+	vector<int> linkedFrom (metaIdx, -1);
 	for (MetaNode & mn : contracted.nodes) {
-		set<int> metaLinks;
-
-		for (Node & n : mn.subNodes) {
-			for (int nei : n.neighbors) {
-				if (affectations[nei] != mn.idx) {
-					metaLinks.insert (affectations[nei]);
+		for (int read : mn.subNodes) {
+			for (const int * nei = graph.neighborsBegin(read) ; nei != graph.neighborsEnd(read) ; nei++) {
+				int metaNei = affectations[*nei];
+				if (metaNei != mn.idx && linkedFrom[metaNei] != mn.idx) {
+					linkedFrom[metaNei] = mn.idx;
+					mn.neighbors.push_back(metaNei);
 				}
 			}
 		}
-
-		for (int nei : metaLinks) {
-			mn.neighbors.push_back(nei);
-		}
+		sort(mn.neighbors.begin(), mn.neighbors.end());
 	}
 
-
+	contracted.indexNodes();
 	return contracted;
 }
 
 
-Graph<MetaNode> absorbFingers (Graph<MetaNode> graph) {
-	vector<MetaNode> toRemove;
+/* A meta node with a single neighbor that has more than two neighbors is
+   merged into it. Neighbor counts are the current ones, in node order. */
+void absorbFingers (MetaGraph & graph) {
+	vector<char> toRemove (graph.nodes.size(), 0);
 
 	// Check for removable meta nodes
-	for (MetaNode & mn : graph.nodes) {
+	for (size_t position = 0 ; position < graph.nodes.size() ; position++) {
+		MetaNode & mn = graph.nodes[position];
 		if (mn.neighbors.size() == 1) {
-			MetaNode & metaNei = graph.getNodeFromIdx(*(mn.neighbors.begin()));
+			MetaNode & metaNei = graph.getNodeFromIdx(mn.neighbors.front());
 
 			if (metaNei.neighbors.size() > 2) {
-				for (Node & sub : mn.subNodes)
-					metaNei.subNodes.push_back(sub);
+				metaNei.subNodes.insert(metaNei.subNodes.end(), mn.subNodes.begin(), mn.subNodes.end());
 				metaNei.neighbors.erase(
 					remove(metaNei.neighbors.begin(), metaNei.neighbors.end(), mn.idx),
 					metaNei.neighbors.end()
 				);
-				
-				toRemove.push_back(mn);
+
+				toRemove[position] = 1;
 			}
 		}
 	}
 
 	// Remove metanodes
-	for (MetaNode & mn : toRemove) {
-		graph.nodes.erase(
-			remove(graph.nodes.begin(), graph.nodes.end(), mn),
-			graph.nodes.end()
-		);
-	}
-
-	return graph;
+	graph.removeMarked(toRemove);
 }
 
 
-
-Graph<MetaNode> filterNodes (Graph<MetaNode> graph, int nodeThreshold) {
-	vector<MetaNode> toRemove;
+/* Meta nodes of at most nodeThreshold reads are removed, with their links. */
+void filterNodes (MetaGraph & graph, int nodeThreshold) {
+	vector<char> toRemove (graph.nodes.size(), 0);
 
 	// Detect removable
-	for (MetaNode & mn : graph.nodes) {
+	for (size_t position = 0 ; position < graph.nodes.size() ; position++) {
+		MetaNode & mn = graph.nodes[position];
 
-		if (mn.subNodes.size() <= nodeThreshold) {
+		// size_t against int, as upstream compares them
+		if (mn.subNodes.size() <= (size_t) nodeThreshold) {
 			// Remove links
 			for (int neiIdx : mn.neighbors) {
 				MetaNode & metaNei = graph.getNodeFromIdx(neiIdx);
@@ -155,64 +197,57 @@ Graph<MetaNode> filterNodes (Graph<MetaNode> graph, int nodeThreshold) {
 				);
 			}
 
-			toRemove.push_back(mn);
+			toRemove[position] = 1;
 		}
 	}
 
 	// Remove meta nodes filtered
-	for (MetaNode & mn : toRemove) {
-		graph.nodes.erase(
-			remove(graph.nodes.begin(), graph.nodes.end(), mn),
-			graph.nodes.end()
-		);
-	}
-
-	return graph;
+	graph.removeMarked(toRemove);
 }
 
 
+/* As upstream: for each meta node, the links of its reads to reads outside
+   it (in another meta node or in none) are counted per *read index*, and
+   every neighbor whose meta node idx equals such a read index, counted at
+   most edgeThreshold times, is removed from the meta node's neighbors (on
+   that side only). Only read indices equal to a neighbor idx can change the
+   result, so only those are counted. */
+void filterEdges (MetaGraph & graph, int edgeThreshold, const ReadGraph & reads) {
+	int readsNb = reads.size();
 
-Graph<MetaNode> filterEdges (Graph<MetaNode> graph, int edgeThreshold, int originalSize) {
 	// compute the nodes affectations
-	vector<int> metaAffectation (originalSize, -1);
+	vector<int> metaAffectation (readsNb, -1);
+	for (const MetaNode & mn : graph.nodes)
+		for (int read : mn.subNodes)
+			metaAffectation[read] = mn.idx;
+
+	vector<int> weights (readsNb, 0);
+	vector<int> neighborOf (readsNb, -1);
 	for (MetaNode & mn : graph.nodes) {
-		for (Node & n : mn.subNodes) {
-			metaAffectation[n.idx] = mn.idx;
-		}
-	}
+		if (mn.neighbors.empty())
+			continue;
+		for (int neiIdx : mn.neighbors)
+			if (neiIdx < readsNb)
+				neighborOf[neiIdx] = mn.idx;
 
-	// Compute weights
-	for (MetaNode & mn : graph.nodes) {
-		map<int, int> weights;
-
-		for (Node & n : mn.subNodes) {
-			for (int neiIdx : n.neighbors) {
-				int metaIdx = metaAffectation[neiIdx];
-
-				if (metaIdx != mn.idx) {
-					int weight = weights.find(neiIdx) == weights.end() ? 1 : weights[neiIdx] + 1;
-					weights[neiIdx] = weight;
-				}
+		// Compute weights
+		for (int read : mn.subNodes) {
+			for (const int * nei = reads.neighborsBegin(read) ; nei != reads.neighborsEnd(read) ; nei++) {
+				if (neighborOf[*nei] == mn.idx && metaAffectation[*nei] != mn.idx)
+					weights[*nei]++;
 			}
 		}
 
 		// Deletion of edges under the threshold
-		for (map<int,int>::iterator it = weights.begin(); it != weights.end(); ++it) {
-			int neiIdx = it->first;
-
-			if (it->second <= edgeThreshold) {
-				mn.neighbors.erase(
-					remove(mn.neighbors.begin(), mn.neighbors.end(), neiIdx),
-					mn.neighbors.end()
-				);
-			}
+		size_t kept = 0;
+		for (size_t i = 0 ; i < mn.neighbors.size() ; i++) {
+			int neiIdx = mn.neighbors[i];
+			int weight = neiIdx < readsNb ? weights[neiIdx] : 0;
+			if (weight == 0 || weight > edgeThreshold)
+				mn.neighbors[kept++] = neiIdx;
+			if (neiIdx < readsNb)
+				weights[neiIdx] = 0;
 		}
+		mn.neighbors.resize(kept);
 	}
-
-	return graph;
 }
-
-
-
-
-

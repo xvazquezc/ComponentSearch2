@@ -1,23 +1,17 @@
-#include <vector>
 #include <fstream>
-#include <iostream>
 #include <string>
-#include <algorithm>
-#include <sstream>
-#include <set>
-
 
 #include "Graph.hpp"
-
-
-using namespace std;
 
 
 #ifndef IO_HPP
 #define IO_HPP
 
-Graph<Node> load_graph (ifstream & verticies, ifstream & edges);
-void save_componants (Graph<MetaNode> metagraph, Graph<Node> graph, ifstream & nodes, ofstream & componentsStream);
-void save_metagraph (Graph<MetaNode> graph, ofstream & nodes, ofstream & edges);
+/* One read per non-empty line of the nodes file after its header; the edges
+   file is read twice (degrees, then neighbors) so that the graph is built in
+   place, without a temporary edge list. */
+ReadGraph load_graph (const std::string & nodesFilename, const std::string & edgesFilename);
+void save_componants (MetaGraph & metagraph, int readsNb, std::ifstream & nodes, std::ofstream & componentsStream);
+void save_metagraph (const MetaGraph & graph, std::ofstream & nodes, std::ofstream & edges);
 
 #endif
